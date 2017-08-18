@@ -4,6 +4,7 @@ import org.neo4j.cypher.export.SubGraph;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.PropertyContainer;
 import org.neo4j.graphdb.Relationship;
+import org.parboiled.common.ImmutableList;
 
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -42,9 +43,22 @@ public class MetaInformation {
                 continue;
             }
             if (storedClass == void.class || storedClass.equals(value.getClass())) continue;
+            if (value instanceof Number) {
+                Class<? extends Number> type = NUMBER_TYPES.stream()
+                        .filter(n -> n == storedClass || n == value.getClass())
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException(value.getClass().getName()));
+                keyTypes.put(prop, type);
+                continue;
+            }
             keyTypes.put(prop, void.class);
         }
     }
+
+    @SuppressWarnings("unchecked")
+    private static final ImmutableList<Class<? extends Number>> NUMBER_TYPES = ImmutableList.of(
+            Long.class, Double.class, Integer.class, Float.class, Short.class, Byte.class
+    );
 
     public final static Set<String> GRAPHML_ALLOWED = new HashSet<>(asList("boolean", "int", "long", "float", "double", "string"));
 

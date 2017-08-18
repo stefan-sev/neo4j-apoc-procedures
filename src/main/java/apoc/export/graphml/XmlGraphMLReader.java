@@ -2,7 +2,12 @@ package apoc.export.graphml;
 
 import apoc.export.util.BatchTransaction;
 import apoc.export.util.Reporter;
-import org.neo4j.graphdb.*;
+import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.Label;
+import org.neo4j.graphdb.Node;
+import org.neo4j.graphdb.PropertyContainer;
+import org.neo4j.graphdb.Relationship;
+import org.neo4j.graphdb.RelationshipType;
 
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
@@ -12,8 +17,15 @@ import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 import java.io.Reader;
+import java.lang.reflect.Array;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+
+import static org.apache.commons.lang3.StringUtils.isEmpty;
+import static org.apache.commons.lang3.StringUtils.substringBetween;
 
 /**
  * Created by mh on 10.07.13.
@@ -53,37 +65,61 @@ public class XmlGraphMLReader {
         return this;
     }
 
-
-
     enum Type {
         BOOLEAN() {
             Object parse(String value) {
                 return Boolean.valueOf(value);
             }
+
+            Class<?> scanClass() {
+                return Boolean.class;
+            }
         }, INT() {
             Object parse(String value) {
                 return Integer.parseInt(value);
+            }
+
+            Class<?> scanClass() {
+                return Integer.class;
             }
         }, LONG() {
             Object parse(String value) {
                 return Long.parseLong(value);
             }
+
+            Class<?> scanClass() {
+                return Long.class;
+            }
         }, FLOAT() {
             Object parse(String value) {
                 return Float.parseFloat(value);
+            }
+
+            Class<?> scanClass() {
+                return Float.class;
             }
         }, DOUBLE() {
             Object parse(String value) {
                 return Double.parseDouble(value);
             }
 
+            Class<?> scanClass() {
+                return Double.class;
+            }
+
         }, STRING() {
             Object parse(String value) {
-                return value;
+                return value == null ? "" : value;
+            }
+
+            Class<?> scanClass() {
+                return String.class;
             }
         };
 
         abstract Object parse(String value);
+
+        abstract Class<?> scanClass();
 
         public static Type forType(String type) {
             if (type==null) return STRING;
@@ -94,19 +130,24 @@ public class XmlGraphMLReader {
     static class Key {
         String id;
         String name;
+        Type list;
         boolean forNode;
         Type type;
         Object defaultValue;
 
-        public Key(String id, String name, String type, String forNode) {
+        public Key(String id, String name, String type, String list, String forNode) {
             this.id = id;
             this.name = name;
             this.type = Type.forType(type);
+            this.list = list != null ? Type.forType(list) : null;
             this.forNode = forNode == null || forNode.equalsIgnoreCase("node");
+            if (this.type.equals(Type.STRING)) {
+                this.defaultValue = "";
+            }
         }
 
         private static Key defaultKey(String id, boolean forNode) {
-            return new Key(id,id,"string", forNode ? "node" : "edge");
+            return new Key(id,id,"string", null, forNode ? "node" : "edge");
         }
 
         public void setDefault(String data) {
@@ -115,7 +156,18 @@ public class XmlGraphMLReader {
 
         public Object parseValue(String input) {
             if (input == null || input.trim().isEmpty()) return defaultValue;
-            return type.parse(input);
+            if (list == null) {
+                return type.parse(input);
+            } else {
+                List<String> list = Arrays.stream(substringBetween(input, "[", "]").replace("\"", "").split(",\\s*"))
+                        .filter(s -> !isEmpty(s))
+                        .collect(Collectors.toList());
+
+                Class<?> x = type.scanClass();
+                return list.stream()
+                        .map(s -> type.parse(s))
+                        .toArray(len -> (Object[]) Array.newInstance(x, len));
+            }
         }
     }
 
@@ -127,6 +179,7 @@ public class XmlGraphMLReader {
     public static final QName FOR = QName.valueOf("for");
     public static final QName NAME = QName.valueOf("attr.name");
     public static final QName TYPE = QName.valueOf("attr.type");
+    public static final QName LIST = QName.valueOf("attr.list");
     public static final QName KEY = QName.valueOf("key");
 
     public XmlGraphMLReader(GraphDatabaseService gdb) {
@@ -154,7 +207,7 @@ public class XmlGraphMLReader {
                     if (name.equals("graphml") || name.equals("graph")) continue;
                     if (name.equals("key")) {
                         String id = getAttribute(element, ID);
-                        Key key = new Key(id, getAttribute(element, NAME), getAttribute(element, TYPE), getAttribute(element, FOR));
+                        Key key = new Key(id, getAttribute(element, NAME), getAttribute(element, TYPE), getAttribute(element, LIST), getAttribute(element, FOR));
 
                         XMLEvent next = peek(reader);
                         if (next.isStartElement() && next.asStartElement().getName().getLocalPart().equals("default")) {
@@ -195,7 +248,7 @@ public class XmlGraphMLReader {
                             addLabels(node, labels);
                         }
                         if (storeNodeIds) node.setProperty("id", id);
-                        setDefaults(nodeKeys, node);
+                        // setDefaults(nodeKeys, node);
                         last = node;
                         cache.put(id, node.getId());
                         if (reporter != null) reporter.update(1, 0, 0);
@@ -211,7 +264,7 @@ public class XmlGraphMLReader {
                         Node to = gdb.getNodeById(cache.get(target));
                         RelationshipType type = label != null ? RelationshipType.withName(label) : defaultRelType;
                         Relationship relationship = from.createRelationshipTo(to, type);
-                        setDefaults(relKeys, relationship);
+                        //setDefaults(relKeys, relationship);
                         if (reporter != null) reporter.update(0, 1, 0);
                         count++;
                         last = relationship;
