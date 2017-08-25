@@ -55,6 +55,7 @@ public class MetaInformation {
         }
     }
 
+
     @SuppressWarnings("unchecked")
     private static final ImmutableList<Class<? extends Number>> NUMBER_TYPES = ImmutableList.of(
             Long.class, Double.class, Integer.class, Float.class, Short.class, Byte.class
